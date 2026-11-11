@@ -7,7 +7,7 @@
   3) index.html · llms.txt 생성, data/state.json(계산 결과만, 원 시세 아님) 저장
 
 원칙
-  - 원 시세(종가 표·CSV)는 저장소에 남기지 않는다. 계산 결과만 남긴다.
+  - 원 시세(종가 표·CSV)는 저장소에 남기지 않는다. 계산 결과만 남긴다(페이지에 그대로 보이는 VIX 값만 예외).
   - 한국 지수를 못 받으면 아무것도 바꾸지 않고 실패로 끝낸다(이전 페이지 유지).
   - 미국·환율·VIX나 과거 자료를 못 받으면 data/state.json의 이전 계산값을 그대로 쓴다.
   - 장중(미완성) 봉은 쓰지 않는다.
@@ -75,6 +75,7 @@ def cut_asof(series, asof):
 # ───────────────────────── 계산 ─────────────────────────
 def gaps(series):
     ds = sorted(series); c = [series[d] for d in ds]
+    if len(c) < 253: raise RuntimeError(f"일봉이 너무 적음: {len(c)}개")
     g = lambda n: (c[-1] / (sum(c[-n:]) / n) - 1) * 100
     return {"date": ds[-1].isoformat(), "close": c[-1], "g200": g(200), "g50": g(50),
             "c20": (c[-1] / c[-21] - 1) * 100, "hi252": max(c[-252:]),
@@ -126,7 +127,7 @@ def regime_study(K, Q):
             "state": cur_state, "state_start": dates[cur_i].isoformat(),
             "state_days": n - cur_i, "kospi_gap": g_now, "last_like": last_like,
             "weak_total": len(weak),
-            "weak_short": sum(1 for _, a, b in weak if b - a + 1 < 20),
+            "weak_short": sum(1 for _, a, b in ended_weak if b - a + 1 < 20),
             "long_weak": long_weak, "stats": stats}
 
 # ───────────────────────── 글 만들기 ─────────────────────────
@@ -201,7 +202,9 @@ def render(S):
     kp, kq, gd = I["kospi"], I["kosdaq"], I["gold"]
     sp, nq, fx, vx = I["spx"], I["ndx"], I["fx"], I["vix"]
     state = R["state"]; skr = STATE_KO[state]
-    asof = kp["date"]; us_date = sp["date"]
+    asof = kp["date"]
+    def stale(x):  # 한국 기준일보다 7일 넘게 오래된 값(이전 값 재사용)이면 표시
+        return " · 갱신 지연" if (date.fromisoformat(asof) - date.fromisoformat(x["date"])).days > 6 else ""
     # 헤드라인
     if state == "both_down": h1 = "코스피와 코스닥이 둘 다 200일선 아래에 있습니다."
     elif state == "both_up": h1 = "코스피와 코스닥이 둘 다 200일선 위에 있습니다."
@@ -212,6 +215,7 @@ def render(S):
             "mixed": "두 지수 중 하나만 200일선 위면 혼조 국면입니다."}[state]
     def rel(name, g):
         josa = "은" if name == "코스닥" else "는"
+        if abs(g) < 0.05: return f"{name}{josa} 200일선과 거의 같"
         return f"{name}{josa} 200일선보다 {pct(g, sign=False)} {'높' if g > 0 else '낮'}"
     lead = f"{rule} {rel('코스피', kp['g200'])}고, {rel('코스닥', kq['g200'])}습니다. "
     lead += f"{skr} 국면은 {ko_date(R['state_start'])}부터 {R['state_days']}거래일째입니다."
@@ -220,7 +224,7 @@ def render(S):
         if R["last_like"]:
             d = date.fromisoformat(R["last_like"])
             lead += f" 코스피가 200일선보다 이만큼 {word}은 날은 이번 국면 전에는 {d.year}년 {d.month}월이 마지막이었습니다."
-        else:
+        elif not R.get("last_like_partial"):
             lead += f" 코스피가 200일선보다 이만큼 {word}은 것은 {R['first'][:4]}년 이후 처음입니다."
     on = {s: (' class="on" aria-current="true"' if s == state else "") for s in STATE_KO}
     pts = [("코스닥", kq["g200"]), ("코스피", kp["g200"]), ("금 ETF", gd["g200"]), ("나스닥", nq["g200"]), ("S&P500", sp["g200"])]
@@ -229,17 +233,19 @@ def render(S):
     def row(name, x, note=""):
         return (f'<tr><td>{name}{note}</td><td class="num {cls(x["g200"])}">{pct(x["g200"])}</td>'
                 f'<td class="num {cls(x["g50"])}">{pct(x["g50"])}</td><td class="num {cls(x["c20"])}">{pct(x["c20"])}</td></tr>')
-    usn = lambda x: f' <span class="small">(미국 {md(x["date"])})</span>'
+    usn = lambda x: f' <span class="small">(미국 {md(x["date"])}{stale(x)})</span>'
     rows = "\n".join([row("코스피", kp), row("코스닥", kq), row("금 ETF (KODEX 골드선물(H))", gd),
                       row("S&amp;P500", sp, usn(sp)), row("나스닥", nq, usn(nq)),
-                      row("원·달러 환율", fx, f' <span class="small">({md(fx["date"])})</span>')])
+                      row("원·달러 환율", fx, f' <span class="small">({md(fx["date"])}{stale(fx)})</span>')])
     pos = (vx["close"] - vx["lo252"]) / (vx["hi252"] - vx["lo252"]) if vx["hi252"] > vx["lo252"] else 0.5
     where = "아래쪽" if pos < 1/3 else ("위쪽" if pos > 2/3 else "가운데쯤")
-    vix_p = (f"VIX(미국 S&amp;P500 옵션으로 계산한 앞으로 30일 변동성 예상치)는 {vx['close']:.2f}{ro(vx['close'])}, "
+    vix_p = (f"VIX(미국 S&amp;P500 옵션으로 계산한 앞으로 30일 변동성 예상치)는 현지 {md(vx['date'])}{stale(vx)} 종가 기준 {vx['close']:.2f}{ro(vx['close'])}, "
              f"최근 1년 범위({vx['lo252']:.2f}~{vx['hi252']:.2f})의 {where}입니다. "
              f"최근 20거래일 동안 {pct(vx['c20'], sign=False)} {'올랐' if vx['c20'] > 0 else '내렸'}습니다.")
-    hi_p = (f"코스피는 최근 1년 중 가장 높았던 종가보다 {pct(kp['from_hi'], sign=False)}, "
-            f"코스닥은 {pct(kq['from_hi'], sign=False)} 낮습니다.") if kp["from_hi"] < 0 or kq["from_hi"] < 0 else ""
+    def hi_part(name, josa, x):
+        if x > -0.05: return f"{name}{josa} 최근 1년 중 가장 높은 종가에 있습니다"
+        return f"{name}{josa} 최근 1년 중 가장 높았던 종가보다 {pct(x, sign=False)} 낮습니다"
+    hi_p = f"{hi_part('코스피', '는', kp['from_hi'])}. {hi_part('코스닥', '은', kq['from_hi'])}."
     # 통계표
     def srow(H, s, first_col):
         x = ST[f"{H}_{s}"]; cur = ' class="cur"' if s == state else ""
@@ -331,7 +337,7 @@ def render(S):
       </div>
       <p>{hi_p}</p>
       <p>{vix_p}</p>
-      <p class="small">계산: (종가 ÷ 최근 200·50거래일 종가 평균 − 1), 최근 20거래일은 (종가 ÷ 20거래일 전 종가 − 1). 한국 지수·금 ETF는 {asof} 종가(네이버 금융 일봉). 미국 지수·환율·VIX는 현지 {us_date} 종가(Yahoo Finance).</p>
+      <p class="small">계산: (종가 ÷ 최근 200·50거래일 종가 평균 − 1), 최근 20거래일은 (종가 ÷ 20거래일 전 종가 − 1). 한국 지수·금 ETF는 {asof} 종가(네이버 금융 일봉). 미국 지수·환율·VIX는 표와 문장에 적힌 현지 날짜의 종가(Yahoo Finance)입니다.</p>
     </section>
 
     <section id="tonggye" aria-labelledby="h-tonggye">
@@ -388,7 +394,7 @@ def render(S):
 <footer>
   <div class="wrap">
     <p>이 페이지는 공개된 지수 값으로 계산한 결과를 보여줄 뿐, 어떤 종목이나 자산의 매수·매도를 권하지 않습니다.</p>
-    <p>마지막 갱신: 한국 {asof} 종가, 미국 현지 {us_date} 종가 기준. 한국 장이 열린 날 오후에 자동으로 갱신됩니다.</p>
+    <p>마지막 갱신: 한국 {asof} 종가 기준(미국 지표는 각각 적힌 현지 날짜). 한국 장이 열린 날 오후에 자동으로 갱신됩니다.</p>
   </div>
 </footer>
 </body>
@@ -410,7 +416,7 @@ def render(S):
 ## {asof} 한국 종가 기준
 - 국면: {skr} ({R['state_start']}부터 {R['state_days']}거래일째).
 - 코스피 200일선 대비 {pct(kp['g200'])}, 코스닥 {pct(kq['g200'])}.
-- 미국 현지 {us_date} 종가: S&P500 {pct(sp['g200'])}, 나스닥 {pct(nq['g200'])} (200일선 대비). VIX {vx['close']:.2f}.
+- 200일선 대비(현지 종가 날짜): S&P500 {pct(sp['g200'])}({sp['date']}), 나스닥 {pct(nq['g200'])}({nq['date']}). VIX {vx['close']:.2f}({vx['date']}).
 - {R['first'][:7]} 이후 약세 국면 거래일 중 6개월 뒤 값이 있는 {s6['n']:,}일의 6개월 뒤 코스피: 평균 {pct(s6['mean'])}, 중앙값 {pct(s6['median'])}, 오른 비율 {s6['up']:.0f}%, 하위 10% {pct(s6['p10'])}.
 """
     return html, llms
@@ -423,9 +429,9 @@ def main():
     prev = json.loads(state_path.read_text()) if state_path.exists() else {}
     warn = []
     # 한국(필수)
-    NK = drop_unfinished(naver_daily("KOSPI"), KST, (15, 40))
-    NQ = drop_unfinished(naver_daily("KOSDAQ"), KST, (15, 40))
-    NG = drop_unfinished(naver_daily("132030", 400), KST, (15, 40))
+    NK = drop_unfinished(naver_daily("KOSPI"), KST, (16, 40))
+    NQ = drop_unfinished(naver_daily("KOSDAQ"), KST, (16, 40))
+    NG = drop_unfinished(naver_daily("132030", 400), KST, (16, 40))
     NK, NQ, NG = (cut_asof(x, asof) for x in (NK, NQ, NG))
     if not (max(NK) == max(NQ) == max(NG)): raise RuntimeError(f"한국 마지막 날짜 불일치 {max(NK)} {max(NQ)} {max(NG)}")
     ind = {"kospi": gaps(NK), "kosdaq": gaps(NQ), "gold": gaps(NG)}
@@ -447,8 +453,11 @@ def main():
         if regime["last"] != ind["kospi"]["date"]: raise RuntimeError("국면 마지막 날짜 불일치")
     except Exception as e:
         if "regime" not in prev: raise
-        regime = prev["regime"]; warn.append(f"regime: 이전 값 사용 ({e})")
-        if regime["last"] != ind["kospi"]["date"]: raise RuntimeError(f"국면 통계를 새로 못 만들었고 이전 값 날짜가 다름: {e}")
+        cur = regime_study(NK, NQ)  # 지금 국면·시작일·거래일째는 네이버 자료만으로 다시 계산
+        regime = dict(prev["regime"])
+        for f in ("state", "state_start", "state_days", "kospi_gap", "last"): regime[f] = cur[f]
+        regime["last_like"] = cur["last_like"]; regime["last_like_partial"] = True
+        warn.append(f"regime: 통계는 이전 값, 지금 국면은 네이버만으로 계산 ({e})")
     S = {"ind": ind, "regime": regime, "warn": warn}
     html, llms = render(S)
     if not asof or "--write" in sys.argv:

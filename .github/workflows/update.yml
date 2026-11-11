@@ -2,8 +2,9 @@ name: 국면판 갱신
 
 on:
   schedule:
-    # 한국 시각 평일 16:10, 18:10 (UTC 07:10, 09:10). 두 번째는 첫 번째가 밀리거나 실패했을 때를 위한 예비.
-    - cron: "10 7 * * 1-5"
+    # 한국 시각 평일 16:50, 18:10 (UTC 07:50, 09:10). 수능일처럼 16:30에 끝나는 날도 종가로 잡도록 16:50.
+    # 두 번째는 첫 번째가 밀리거나 실패했을 때를 위한 예비.
+    - cron: "50 7 * * 1-5"
     - cron: "10 9 * * 1-5"
   workflow_dispatch:
   push:
@@ -39,7 +40,8 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add index.html llms.txt data/state.json
-            git commit -m "자동 갱신: $(python3 -c 'import json;print(json.load(open("data/state.json"))["ind"]["kospi"]["date"])') 종가"
+            git commit -m "자동 갱신: 한국 $(python3 -c 'import json;d=json.load(open("data/state.json"))["ind"];print(d["kospi"]["date"], "/ 미국", d["spx"]["date"])')"
+            git pull --rebase origin main
             git push
             echo "changed=1" >> "$GITHUB_OUTPUT"
           fi
