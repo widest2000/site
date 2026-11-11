@@ -283,7 +283,7 @@ def render(S):
     ld = json.dumps({"@context": "https://schema.org", "@type": "WebPage",
                      "name": "한국시장 국면판 — 코스피·코스닥 200일선으로 보는 시장 상황", "inLanguage": "ko",
                      "dateModified": asof,
-                     "description": f"{asof} 종가 기준 한국 시장 국면({skr})과 보조 지표, {R['first'][:7]}~{asof[:7]} 국면별 코스피 이후 수익률 통계.",
+                     "description": f"{asof} 종가 기준 한국 시장 국면({skr})과 보조 지표, {R['first'][:7]}~{sa[:7]} 국면별 코스피 이후 수익률 통계.",
                      "about": ["200일 이동평균선", "코스피", "코스닥", "시장 국면", "VIX", "원달러 환율"]}, ensure_ascii=False, indent=2)
     html = f"""<!DOCTYPE html>
 <html lang="ko">
