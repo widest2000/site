@@ -123,7 +123,7 @@ def regime_study(K, Q):
     for i in range(cur_i - 1, 198, -1):
         if (g_now < 0 and gk[i] <= g_now) or (g_now >= 0 and gk[i] >= g_now):
             last_like = dates[i].isoformat(); break
-    return {"first": dates[199].isoformat(), "last": dates[-1].isoformat(),
+    return {"first": dates[199].isoformat(), "last": dates[-1].isoformat(), "stats_asof": dates[-1].isoformat(),
             "state": cur_state, "state_start": dates[cur_i].isoformat(),
             "state_days": n - cur_i, "kospi_gap": g_now, "last_like": last_like,
             "weak_total": len(weak),
@@ -203,8 +203,10 @@ def render(S):
     sp, nq, fx, vx = I["spx"], I["ndx"], I["fx"], I["vix"]
     state = R["state"]; skr = STATE_KO[state]
     asof = kp["date"]
+    sa = R.get("stats_asof", asof)  # 통계·구간을 계산한 날(과거 자료를 못 받은 날엔 이전 날짜)
+    stale_stats = (f" 오늘은 과거 자료를 받지 못해, 위 통계·약세 구간·횟수는 {sa} 기준입니다." if sa != asof else "")
     def stale(x):  # 한국 기준일보다 7일 넘게 오래된 값(이전 값 재사용)이면 표시
-        return " · 갱신 지연" if (date.fromisoformat(asof) - date.fromisoformat(x["date"])).days > 6 else ""
+        return " · 갱신 지연" if (date.fromisoformat(asof) - date.fromisoformat(x["date"])).days > 7 else ""
     # 헤드라인
     if state == "both_down": h1 = "코스피와 코스닥이 둘 다 200일선 아래에 있습니다."
     elif state == "both_up": h1 = "코스피와 코스닥이 둘 다 200일선 위에 있습니다."
@@ -239,11 +241,12 @@ def render(S):
                       row("원·달러 환율", fx, f' <span class="small">({md(fx["date"])}{stale(fx)})</span>')])
     pos = (vx["close"] - vx["lo252"]) / (vx["hi252"] - vx["lo252"]) if vx["hi252"] > vx["lo252"] else 0.5
     where = "아래쪽" if pos < 1/3 else ("위쪽" if pos > 2/3 else "가운데쯤")
-    vix_p = (f"VIX(미국 S&amp;P500 옵션으로 계산한 앞으로 30일 변동성 예상치)는 현지 {md(vx['date'])}{stale(vx)} 종가 기준 {vx['close']:.2f}{ro(vx['close'])}, "
+    vix_p = (f"VIX(미국 S&amp;P500 옵션으로 계산한 앞으로 30일 변동성 예상치)는 현지 {md(vx['date'])} 종가 기준{'(갱신 지연)' if stale(vx) else ''} {vx['close']:.2f}{ro(vx['close'])}, "
              f"최근 1년 범위({vx['lo252']:.2f}~{vx['hi252']:.2f})의 {where}입니다. "
              f"최근 20거래일 동안 {pct(vx['c20'], sign=False)} {'올랐' if vx['c20'] > 0 else '내렸'}습니다.")
     def hi_part(name, josa, x):
-        if x > -0.05: return f"{name}{josa} 최근 1년 중 가장 높은 종가에 있습니다"
+        if abs(x) < 1e-9: return f"{name}{josa} 최근 1년 중 가장 높은 종가에 있습니다"
+        if x > -0.05: return f"{name}{josa} 최근 1년 중 가장 높았던 종가와 거의 같습니다"
         return f"{name}{josa} 최근 1년 중 가장 높았던 종가보다 {pct(x, sign=False)} 낮습니다"
     hi_p = f"{hi_part('코스피', '는', kp['from_hi'])}. {hi_part('코스닥', '은', kq['from_hi'])}."
     # 통계표
@@ -266,14 +269,14 @@ def render(S):
     callout = "".join(f"<p>{c}</p>" for c in call)
     ep_rows = "\n".join(f'<tr><td class="nw">{e["start"]}</td><td class="nw">{e["end"]}</td><td class="num">{e["len"]}거래일</td></tr>'
                         for e in R["long_weak"])
-    ongoing = (f" 지금 국면({R['state_start']} 시작)은 아직 진행 중이라 목록에 없습니다." if state == "both_down" else "")
+    ongoing = (f" 지금 국면({R['state_start']} 시작)은 아직 진행 중이라 목록에 없습니다." if state == "both_down" and sa == asof else "")
     n6 = {s: ST[f"126_{s}"]["n"] for s in STATE_KO}
     first = date.fromisoformat(R["first"])
     note = (f"각 국면의 해당 거래일 수는 강세 {n6['both_up']:,}일, 혼조 {n6['mixed']:,}일, 약세 {n6['both_down']:,}일입니다"
             f"(6개월 뒤 값이 있는 날만). 한계: 이어지는 날들의 6개월 구간이 서로 겹쳐서, 거래일 수만큼 독립된 사례가 있는 것이 아닙니다. "
             f"약세 국면은 이 기간에 {R['weak_total']}번 시작됐고 그중 {R['weak_short']}번은 20거래일 안에 끝났습니다. "
             f"60거래일 이상 이어진 것은 위 {len(R['long_weak'])}번입니다.{ongoing} "
-            f"일봉 출처는 네이버 금융 자료가 닿는 범위 이전은 Yahoo Finance, 이후는 네이버 금융이며 배당은 빠진 지수 값입니다. 계산 기준일 {asof}.")
+            f"일봉 출처는 네이버 금융 자료가 닿는 범위 이전은 Yahoo Finance, 이후는 네이버 금융이며 배당은 빠진 지수 값입니다. 계산 기준일 {sa}.{stale_stats}")
     css = (ROOT / "templates" / "style.css").read_text()
     desc = ("코스피·코스닥이 200일 이동평균선 위인지 아래인지로 한국 시장 국면(강세·혼조·약세)을 나누고, 미국 지수·환율·VIX와 함께 기준일을 붙여 보여줍니다. "
             f"{first.year}년 이후 국면별 코스피 수익률 통계도 공개합니다. 매수·매도 권유가 아닙니다.")
@@ -342,7 +345,7 @@ def render(S):
 
     <section id="tonggye" aria-labelledby="h-tonggye">
       <h2 id="h-tonggye">국면 통계: 이런 날 뒤에 코스피는 어땠나</h2>
-      <p>{first.year}년 {first.month}월부터 {date.fromisoformat(asof).year}년 {date.fromisoformat(asof).month}월까지 거래일마다 국면을 매기고, 그날부터 3개월(63거래일)·6개월(126거래일) 뒤 코스피가 얼마나 움직였는지 모았습니다. 강세는 둘 다 200일선 위, 혼조는 하나만 위, 약세는 둘 다 아래입니다. 하위10%는 열 번 중 가장 나빴던 한 번의 경계, 상위10%는 가장 좋았던 한 번의 경계입니다.</p>
+      <p>{first.year}년 {first.month}월부터 {date.fromisoformat(sa).year}년 {date.fromisoformat(sa).month}월까지 거래일마다 국면을 매기고, 그날부터 3개월(63거래일)·6개월(126거래일) 뒤 코스피가 얼마나 움직였는지 모았습니다. 강세는 둘 다 200일선 위, 혼조는 하나만 위, 약세는 둘 다 아래입니다. 하위10%는 열 번 중 가장 나빴던 한 번의 경계, 상위10%는 가장 좋았던 한 번의 경계입니다.</p>
       <div class="tablewrap">
         <table>
           <thead><tr><th>6개월 뒤</th><th class="num hide-m">해당 거래일</th><th class="num">평균</th><th class="num">중앙값</th><th class="num">오른 비율</th><th class="num">하위10%</th><th class="num">상위10%</th></tr></thead>
@@ -363,7 +366,7 @@ def render(S):
         <p><strong>숫자가 말하는 것</strong></p>
         {callout}
       </div>
-      <h3>60거래일 이상 이어진 약세 국면 ({first.year}~{date.fromisoformat(asof).year})</h3>
+      <h3>60거래일 이상 이어진 약세 국면 ({first.year}~{date.fromisoformat(sa).year})</h3>
       <div class="tablewrap">
         <table>
           <thead><tr><th>시작</th><th>끝</th><th class="num">길이</th></tr></thead>
@@ -407,7 +410,7 @@ def render(S):
 
 ## 페이지
 - [지표판](index.html#pan): 코스피·코스닥·금 ETF·S&P500·나스닥·원달러 환율의 200일선·50일선 대비 거리와 최근 20거래일 변화, VIX.
-- [국면 통계](index.html#tonggye): {R['first'][:7]}~{asof[:7]} 국면별 3개월·6개월 뒤 코스피 수익률(평균·중앙값·오른 비율·하위/상위 10%)과 60거래일 이상 이어진 약세 국면 목록.
+- [국면 통계](index.html#tonggye): {R['first'][:7]}~{R.get('stats_asof', asof)[:7]} 국면별 3개월·6개월 뒤 코스피 수익률(평균·중앙값·오른 비율·하위/상위 10%)과 60거래일 이상 이어진 약세 국면 목록.
 - [읽는 법](index.html#bangbeop): 200일선·국면·50일선·VIX 뜻.
 
 ## 국면 정의
@@ -417,7 +420,7 @@ def render(S):
 - 국면: {skr} ({R['state_start']}부터 {R['state_days']}거래일째).
 - 코스피 200일선 대비 {pct(kp['g200'])}, 코스닥 {pct(kq['g200'])}.
 - 200일선 대비(현지 종가 날짜): S&P500 {pct(sp['g200'])}({sp['date']}), 나스닥 {pct(nq['g200'])}({nq['date']}). VIX {vx['close']:.2f}({vx['date']}).
-- {R['first'][:7]} 이후 약세 국면 거래일 중 6개월 뒤 값이 있는 {s6['n']:,}일의 6개월 뒤 코스피: 평균 {pct(s6['mean'])}, 중앙값 {pct(s6['median'])}, 오른 비율 {s6['up']:.0f}%, 하위 10% {pct(s6['p10'])}.
+- {R['first'][:7]}~{R.get('stats_asof', asof)} 약세 국면 거래일 중 6개월 뒤 값이 있는 {s6['n']:,}일의 6개월 뒤 코스피: 평균 {pct(s6['mean'])}, 중앙값 {pct(s6['median'])}, 오른 비율 {s6['up']:.0f}%, 하위 10% {pct(s6['p10'])}.
 """
     return html, llms
 
@@ -454,7 +457,7 @@ def main():
     except Exception as e:
         if "regime" not in prev: raise
         cur = regime_study(NK, NQ)  # 지금 국면·시작일·거래일째는 네이버 자료만으로 다시 계산
-        regime = dict(prev["regime"])
+        regime = dict(prev["regime"]); regime.setdefault("stats_asof", prev["regime"]["last"])
         for f in ("state", "state_start", "state_days", "kospi_gap", "last"): regime[f] = cur[f]
         regime["last_like"] = cur["last_like"]; regime["last_like_partial"] = True
         warn.append(f"regime: 통계는 이전 값, 지금 국면은 네이버만으로 계산 ({e})")

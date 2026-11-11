@@ -28,6 +28,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - name: 가장 최근 저장소 상태로 맞추기
+        run: git fetch origin main && git checkout -B main origin/main
       - name: 계산하고 페이지 만들기
         run: python3 tools/build.py
       - name: 바뀐 게 있으면 올리기
