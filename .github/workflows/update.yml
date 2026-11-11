@@ -1,0 +1,51 @@
+name: 국면판 갱신
+
+on:
+  schedule:
+    # 한국 시각 평일 16:10, 18:10 (UTC 07:10, 09:10). 두 번째는 첫 번째가 밀리거나 실패했을 때를 위한 예비.
+    - cron: "10 7 * * 1-5"
+    - cron: "10 9 * * 1-5"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["tools/**", "templates/**", ".github/workflows/**"]
+
+permissions:
+  contents: write
+  pages: write
+
+concurrency:
+  group: update
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 계산하고 페이지 만들기
+        run: python3 tools/build.py
+      - name: 바뀐 게 있으면 올리기
+        id: commit
+        run: |
+          if git diff --quiet -- index.html llms.txt; then
+            echo "바뀐 내용 없음 (휴장일이거나 이미 갱신됨)"
+            echo "changed=0" >> "$GITHUB_OUTPUT"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add index.html llms.txt data/state.json
+            git commit -m "자동 갱신: $(python3 -c 'import json;print(json.load(open("data/state.json"))["ind"]["kospi"]["date"])') 종가"
+            git push
+            echo "changed=1" >> "$GITHUB_OUTPUT"
+          fi
+      - name: 페이지 다시 배포 요청
+        if: steps.commit.outputs.changed == '1'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X POST "repos/${{ github.repository }}/pages/builds"
